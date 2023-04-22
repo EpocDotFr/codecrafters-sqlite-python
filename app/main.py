@@ -1,20 +1,22 @@
-import sys
-
 from dataclasses import dataclass
+import argparse
+import sqlparse
+import struct
 
-# import sqlparse - available if you need it!
 
-database_file_path = sys.argv[1]
-command = sys.argv[2]
+def main() -> None:
+    arg_parser = argparse.ArgumentParser()
+    arg_parser.add_argument('database', type=argparse.FileType('rb'))
+    arg_parser.add_argument('command', choices=['.dbinfo'])
 
-if command == ".dbinfo":
-    with open(database_file_path, "rb") as database_file:
-        # You can use print statements as follows for debugging, they'll be visible when running tests.
-        print("Logs from your program will appear here!")
+    args = arg_parser.parse_args()
 
-        # Uncomment this to pass the first stage
-        # database_file.seek(16)  # Skip the first 16 bytes of the header
-        # page_size = int.from_bytes(database_file.read(2), byteorder="big")
-        # print(f"database page size: {page_size}")
-else:
-    print(f"Invalid command: {command}")
+    if args.command == '.dbinfo':
+        args.database.seek(16)
+
+        page_size = struct.unpack('>h', args.database.read(2))[0]
+
+        print(f'database page size: {page_size}')
+
+if __name__ == '__main__':
+    main()
