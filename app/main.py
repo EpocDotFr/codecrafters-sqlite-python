@@ -1,7 +1,31 @@
 from dataclasses import dataclass
+from typing import BinaryIO
 import argparse
 import sqlparse
 import struct
+
+
+class SQLite:
+    database: BinaryIO
+
+    def __init__(self, database: BinaryIO):
+        self.database = database
+
+    def unpack(self, fmt, size=1):
+        return struct.unpack(
+            f'>{fmt}',
+            self.database.read(size)
+        )
+
+    def exec(self, command: str) -> None:
+        if command == '.dbinfo':
+            self.database.seek(16)
+
+            page_size = self.unpack('H', 2)[0]
+
+            print(f'database page size: {page_size}')
+        else:
+            raise ValueError('Unknown command')
 
 
 def main() -> None:
@@ -11,12 +35,9 @@ def main() -> None:
 
     args = arg_parser.parse_args()
 
-    if args.command == '.dbinfo':
-        args.database.seek(16)
+    db = SQLite(args.database)
+    db.exec(args.command)
 
-        page_size = struct.unpack('>h', args.database.read(2))[0]
-
-        print(f'database page size: {page_size}')
 
 if __name__ == '__main__':
     main()
