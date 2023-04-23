@@ -1,7 +1,5 @@
-from dataclasses import dataclass
 from typing import BinaryIO
 import argparse
-import sqlparse
 import struct
 
 
@@ -18,20 +16,26 @@ class SQLite:
         )
 
     def exec(self, command: str) -> None:
-        if command == '.dbinfo':
-            self.database.seek(16)
+        if command[0] == '.': # Dot command
+            if command == '.dbinfo':
+                self.database.seek(16)
 
-            page_size = self.unpack('H', 2)[0]
+                page_size = self.unpack('H', 2)[0]
 
-            print(f'database page size: {page_size}')
-        else:
-            raise ValueError('Unknown command')
+                print(f'database page size: {page_size}')
+                print(f'number of tables: TODO')
+            elif command == '.tables':
+                pass
+            else:
+                raise ValueError('Unknown command')
+        else: # SQL query
+            pass
 
 
 def main() -> None:
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument('database', type=argparse.FileType('rb'))
-    arg_parser.add_argument('command', choices=['.dbinfo'])
+    arg_parser.add_argument('command')
 
     args = arg_parser.parse_args()
 
