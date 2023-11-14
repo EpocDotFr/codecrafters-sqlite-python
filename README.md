@@ -2,3 +2,5 @@
 
 Source code of my solution to the CodeCrafters' "[Build Your Own SQLite](https://codecrafters.io/challenges/sqlite)"
 challenge.
+
+I've put myself a personal challenge: do not use any third-party packages (only use built-in Python features).
