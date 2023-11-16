@@ -1,4 +1,4 @@
-from typing import BinaryIO
+from typing import BinaryIO, Any
 import argparse
 import struct
 import os
@@ -6,25 +6,37 @@ import os
 
 class SQLiteFile:
     f: BinaryIO
+    page_size: int
 
     def __init__(self, f: BinaryIO):
         self.f = f
 
-    def exec(self, command: str) -> None:
+        if self.read_bytes(16) != b'SQLite format 3\x00':
+            raise ValueError('Not a SQLite file')
+
+        self.page_size = self.read_uint16()
+
+    @classmethod
+    def exec(cls, f: BinaryIO, command: str) -> str:
+        sqlite = cls(f)
+
         if command[0] == '.': # Dot command
             if command == '.dbinfo':
-                self.move(16)
-
-                print(f'database page size: {self.read_uint16()}')
-                print(f'number of tables: TODO')
+                return sqlite.exec_dbinfo()
             elif command == '.tables':
-                pass
+                raise NotImplementedError()
             else:
                 raise ValueError('Unknown dot command')
         else: # SQL query
-            pass
+            raise NotImplementedError()
 
-    def unpack(self, fmt: str, size: int = 1):
+    def exec_dbinfo(self) -> str:
+        return '\n'.join((
+            f'database page size: {self.page_size}',
+            f'number of tables: TODO'
+        ))
+
+    def unpack(self, fmt: str, size: int = 1) -> Any:
         ret = struct.unpack(
             f'>{fmt}',
             self.read_bytes(size)
@@ -32,17 +44,20 @@ class SQLiteFile:
 
         return ret[0] if len(ret) == 1 else ret
 
-    def read_uint16(self):
+    def read_uint16(self) -> int:
         return self.unpack('H', 2)
 
-    def read_bytes(self, size: int):
+    def read_bytes(self, size: int) -> bytes:
         return self.f.read(size)
 
-    def read_byte(self):
+    def read_byte(self) -> bytes:
         return self.read_bytes(1)
 
-    def move(self, offset: int):
+    def move(self, offset: int) -> None:
         self.f.seek(offset, os.SEEK_CUR)
+
+    def move_set(self, offset: int) -> None:
+        self.f.seek(offset, os.SEEK_SET)
 
 
 def main() -> None:
@@ -53,8 +68,7 @@ def main() -> None:
     args = arg_parser.parse_args()
 
     with open(args.filename, 'rb') as f:
-        sqlite = SQLiteFile(f)
-        sqlite.exec(args.command)
+        print(SQLiteFile.exec(f, args.command))
 
 
 if __name__ == '__main__':
