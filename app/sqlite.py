@@ -11,6 +11,7 @@ class SQLitePage:
     start_cell_content_area: int
     fragmented_bytes_count: int
     right_most_pointer: Optional[int]
+    cell_offsets: List[int]
 
 
 class SQLiteFile:
@@ -92,6 +93,12 @@ class SQLiteFile:
         page.fragmented_bytes_count = self.read_uint8()
         page.right_most_pointer = self.read_uint32()
 
+        page.cell_offsets = [
+            self.read_uint16() for _ in range(page.cells_count)
+        ]
+
+        print(page.cell_offsets)
+
         self.pages.append(page)
 
     @classmethod
@@ -102,7 +109,7 @@ class SQLiteFile:
             if command == '.dbinfo':
                 return sqlite.exec_dbinfo()
             elif command == '.tables':
-                raise NotImplementedError()
+                return sqlite.exec_tables()
             else:
                 raise ValueError('Unknown dot command')
         else: # SQL query
@@ -113,6 +120,9 @@ class SQLiteFile:
             f'database page size: {self.page_size}',
             f'number of tables: {self.pages[0].cells_count}'
         ))
+
+    def exec_tables(self) -> str:
+        return ''
 
     def unpack(self, fmt: str, size: int = 1) -> Any:
         ret = struct.unpack(
