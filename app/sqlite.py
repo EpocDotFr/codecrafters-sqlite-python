@@ -1,11 +1,43 @@
+from app.enums import PageType, WriteVersion, ReadVersion, DatabaseTextEncoding
+from typing import BinaryIO, Any, List, Optional
 from io import SEEK_CUR, SEEK_SET
-from typing import BinaryIO, Any
 import struct
+
+
+class SQLitePage:
+    page_type: PageType
+    start_first_freeblock: int
+    cells_count: int
+    start_cell_content_area: int
+    fragmented_bytes_count: int
+    right_most_pointer: Optional[int]
 
 
 class SQLiteFile:
     f: BinaryIO
+
     page_size: int
+    write_version: WriteVersion
+    read_version: ReadVersion
+    reserved_space_size: int
+    max_embed_payload_frac: int
+    min_embed_payload_frac: int
+    leaf_payload_frac: int
+    file_change_counter: int
+    db_size_pages: int
+    first_freelist_page: int
+    total_freelist_page: int
+    schema_cookie: int
+    schema_format_number: int
+    default_page_cache_size: int
+    database_text_encoding: int
+    user_version: int
+    incr_vacuum_mode: int
+    app_id: int
+    version_valid_for_number: int
+    sqlite_version_number: int
+
+    pages: List[SQLitePage] = []
 
     def __init__(self, f: BinaryIO):
         self.f = f
@@ -13,7 +45,54 @@ class SQLiteFile:
         if self.read_bytes(16) != b'SQLite format 3\x00':
             raise ValueError('Not a SQLite file')
 
+        self.read_header()
+        self.read_first_page()
+
+        # while True:
+        #     page = self.read_page()
+        #
+        #     if not page:
+        #         break
+        #
+        #     self.pages.append(page)
+
+    def read_header(self) -> None:
         self.page_size = self.read_uint16()
+        self.write_version = WriteVersion(self.read_uint8())
+        self.read_version = ReadVersion(self.read_uint8())
+        self.reserved_space_size = self.read_uint8()
+        self.max_embed_payload_frac = self.read_uint8()
+        self.min_embed_payload_frac = self.read_uint8()
+        self.leaf_payload_frac = self.read_uint8()
+        self.file_change_counter = self.read_uint32()
+        self.db_size_pages = self.read_uint32()
+        self.first_freelist_page = self.read_uint32()
+        self.total_freelist_page = self.read_uint32()
+        self.schema_cookie = self.read_uint32()
+        self.schema_format_number = self.read_uint32() # TODO Enum
+        self.default_page_cache_size = self.read_uint32()
+        self.largest_root_btree_page_number = self.read_uint32()
+        self.database_text_encoding = DatabaseTextEncoding(self.read_uint32())
+        self.user_version = self.read_uint32()
+        self.incr_vacuum_mode = self.read_uint32()
+        self.app_id = self.read_uint32()
+
+        self.read_bytes(20)
+
+        self.version_valid_for_number = self.read_uint32()
+        self.sqlite_version_number = self.read_uint32()
+
+    def read_first_page(self) -> None:
+        page = SQLitePage()
+
+        page.page_type = PageType(self.read_uint8())
+        page.start_first_freeblock = self.read_uint16()
+        page.cells_count = self.read_uint16()
+        page.start_cell_content_area = self.read_uint16()
+        page.fragmented_bytes_count = self.read_uint8()
+        page.right_most_pointer = self.read_uint32()
+
+        self.pages.append(page)
 
     @classmethod
     def exec(cls, f: BinaryIO, command: str) -> str:
@@ -32,7 +111,7 @@ class SQLiteFile:
     def exec_dbinfo(self) -> str:
         return '\n'.join((
             f'database page size: {self.page_size}',
-            f'number of tables: TODO'
+            f'number of tables: {self.pages[0].cells_count}'
         ))
 
     def unpack(self, fmt: str, size: int = 1) -> Any:
@@ -43,8 +122,17 @@ class SQLiteFile:
 
         return ret[0] if len(ret) == 1 else ret
 
+    def read_uint8(self) -> int:
+        return self.unpack('B')
+
     def read_uint16(self) -> int:
         return self.unpack('H', 2)
+
+    def read_uint32(self) -> int:
+        return self.unpack('I', 4)
+
+    def read_uint64(self) -> int:
+        return self.unpack('Q', 8)
 
     def read_bytes(self, size: int) -> bytes:
         return self.f.read(size)

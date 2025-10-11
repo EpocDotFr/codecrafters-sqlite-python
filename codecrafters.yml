@@ -8,4 +8,4 @@ debug: false
 # on Codecrafters.
 #
 # Available versions: python-3.7, python-3.8
-language_pack: python-3.8
+buildpack: python-3.13
