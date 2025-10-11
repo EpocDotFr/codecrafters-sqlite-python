@@ -4,6 +4,14 @@ from io import SEEK_CUR, SEEK_SET
 import struct
 
 
+class SQLiteCell:
+    left_child_page_number: Optional[int]
+    payload_bytes_count: Optional[int]
+    rowid: Optional[int]
+    payload: Optional[bytes]
+    first_overflow_page_page_number: Optional[int]
+
+
 class SQLitePage:
     page_type: PageType
     start_first_freeblock: int
@@ -12,6 +20,7 @@ class SQLitePage:
     fragmented_bytes_count: int
     right_most_pointer: Optional[int]
     cell_offsets: List[int]
+    cells: List[SQLiteCell]
 
 
 class SQLiteFile:
@@ -31,6 +40,7 @@ class SQLiteFile:
     schema_cookie: int
     schema_format_number: int
     default_page_cache_size: int
+    largest_root_btree_page_number: int
     database_text_encoding: int
     user_version: int
     incr_vacuum_mode: int
@@ -70,7 +80,7 @@ class SQLiteFile:
         self.first_freelist_page = self.read_uint32()
         self.total_freelist_page = self.read_uint32()
         self.schema_cookie = self.read_uint32()
-        self.schema_format_number = self.read_uint32() # TODO Enum
+        self.schema_format_number = self.read_uint32()
         self.default_page_cache_size = self.read_uint32()
         self.largest_root_btree_page_number = self.read_uint32()
         self.database_text_encoding = DatabaseTextEncoding(self.read_uint32())
@@ -78,7 +88,7 @@ class SQLiteFile:
         self.incr_vacuum_mode = self.read_uint32()
         self.app_id = self.read_uint32()
 
-        self.read_bytes(20)
+        self.read_bytes(20) # Reserved space
 
         self.version_valid_for_number = self.read_uint32()
         self.sqlite_version_number = self.read_uint32()
@@ -91,13 +101,19 @@ class SQLiteFile:
         page.cells_count = self.read_uint16()
         page.start_cell_content_area = self.read_uint16()
         page.fragmented_bytes_count = self.read_uint8()
-        page.right_most_pointer = self.read_uint32()
+
+        if page.page_type in (PageType.InteriorTable, PageType.InteriorIndex):
+            page.right_most_pointer = self.read_uint32()
 
         page.cell_offsets = [
             self.read_uint16() for _ in range(page.cells_count)
         ]
 
         print(page.cell_offsets)
+
+        page.cells = [
+            self.read_cell(page.page_type, offset) for offset in page.cell_offsets
+        ]
 
         self.pages.append(page)
 
@@ -131,6 +147,29 @@ class SQLiteFile:
         )
 
         return ret[0] if len(ret) == 1 else ret
+
+    def read_varint(self) -> int:
+        return 0 # TODO
+
+    def read_cell(self, page_type: PageType, offset: int) -> SQLiteCell:
+        cell = SQLiteCell()
+
+        if page_type in (PageType.InteriorTable, PageType.InteriorIndex):
+            cell.left_child_page_number = self.read_uint32()
+
+        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+            cell.payload_bytes_count = self.read_varint()
+
+        if page_type in (PageType.LeafTable, PageType.InteriorTable):
+            cell.rowid = self.read_varint()
+
+        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+            cell.payload = self.read_bytes(cell.payload_bytes_count)
+
+        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+            cell.first_overflow_page_page_number = self.read_uint32()
+
+        return cell
 
     def read_uint8(self) -> int:
         return self.unpack('B')
