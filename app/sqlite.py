@@ -4,6 +4,10 @@ from io import SEEK_CUR, SEEK_SET
 import struct
 
 
+class SQLiteRecord:
+    header_length: int
+
+
 class SQLiteCell:
     left_child_page_number: Optional[int]
     payload_bytes_count: Optional[int]
@@ -56,7 +60,6 @@ class SQLiteFile:
         if self.read_bytes(16) != b'SQLite format 3\x00':
             raise ValueError('Not a SQLite file')
 
-        self.read_header()
         self.read_first_page()
 
         # while True:
@@ -94,6 +97,8 @@ class SQLiteFile:
         self.sqlite_version_number = self.read_uint32()
 
     def read_first_page(self) -> None:
+        self.read_header()
+
         page = SQLitePage()
 
         page.page_type = PageType(self.read_uint8())
@@ -108,8 +113,6 @@ class SQLiteFile:
         page.cell_offsets = [
             self.read_uint16() for _ in range(page.cells_count)
         ]
-
-        print(page.cell_offsets)
 
         page.cells = [
             self.read_cell(page.page_type, offset) for offset in page.cell_offsets
@@ -149,7 +152,17 @@ class SQLiteFile:
         return ret[0] if len(ret) == 1 else ret
 
     def read_varint(self) -> int:
-        return 0 # TODO
+        bits = ''
+
+        while True:
+            byte_bits = format(self.read_uint8(), '08b')
+
+            bits += byte_bits[1:]
+
+            if byte_bits[0] == '0':
+                break
+
+        return int(bits, 2)
 
     def read_cell(self, page_type: PageType, offset: int) -> SQLiteCell:
         cell = SQLiteCell()
