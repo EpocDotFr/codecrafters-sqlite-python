@@ -6,17 +6,20 @@ import struct
 
 class SQLiteRecord:
     header_length: int
+    serial_types = List[int]
+    columns = List[Any]
 
 
 class SQLiteCell:
     left_child_page_number: Optional[int]
     payload_bytes_count: Optional[int]
     rowid: Optional[int]
-    payload: Optional[bytes]
+    payload: Optional[SQLiteRecord]
     first_overflow_page_page_number: Optional[int]
 
 
 class SQLitePage:
+    start: int
     page_type: PageType
     start_first_freeblock: int
     cells_count: int
@@ -45,7 +48,7 @@ class SQLiteFile:
     schema_format_number: int
     default_page_cache_size: int
     largest_root_btree_page_number: int
-    database_text_encoding: int
+    database_text_encoding: DatabaseTextEncoding
     user_version: int
     incr_vacuum_mode: int
     app_id: int
@@ -101,10 +104,15 @@ class SQLiteFile:
 
         page = SQLitePage()
 
+        page.start = 0
         page.page_type = PageType(self.read_uint8())
         page.start_first_freeblock = self.read_uint16()
-        page.cells_count = self.read_uint16()
+        page.cells_count = self.read_uint16() # FIXME For some reason does not find the correct amount of cells of the first page (3 instead or 5)
         page.start_cell_content_area = self.read_uint16()
+
+        if page.start_cell_content_area == 0:
+            page.start_cell_content_area = 65536
+
         page.fragmented_bytes_count = self.read_uint8()
 
         if page.page_type in (PageType.InteriorTable, PageType.InteriorIndex):
@@ -114,9 +122,13 @@ class SQLiteFile:
             self.read_uint16() for _ in range(page.cells_count)
         ]
 
+        pos = self.tell()
+
         page.cells = [
-            self.read_cell(page.page_type, offset) for offset in page.cell_offsets
+            self.read_cell(page, offset) for offset in page.cell_offsets
         ]
+
+        self.move_set(pos)
 
         self.pages.append(page)
 
@@ -164,25 +176,68 @@ class SQLiteFile:
 
         return int(bits, 2)
 
-    def read_cell(self, page_type: PageType, offset: int) -> SQLiteCell:
+    def read_cell(self, page: SQLitePage, offset: int) -> SQLiteCell:
         cell = SQLiteCell()
 
-        if page_type in (PageType.InteriorTable, PageType.InteriorIndex):
+        self.move_set(page.start + offset)
+
+        if page.page_type in (PageType.InteriorTable, PageType.InteriorIndex):
             cell.left_child_page_number = self.read_uint32()
 
-        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+        if page.page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
             cell.payload_bytes_count = self.read_varint()
 
-        if page_type in (PageType.LeafTable, PageType.InteriorTable):
+        if page.page_type in (PageType.LeafTable, PageType.InteriorTable):
             cell.rowid = self.read_varint()
 
-        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
-            cell.payload = self.read_bytes(cell.payload_bytes_count)
+        if page.page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+            cell.payload = SQLiteRecord()
 
-        if page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
+            cell.payload.header_length = self.read_varint()
+            cell.payload.serial_types = [
+                self.read_varint() for _ in range(page.cells_count)
+            ]
+
+            cell.payload.columns = [
+                self.read_column(serial_type) for serial_type in cell.payload.serial_types
+            ]
+
+            print(cell.payload.columns)
+
+        if page.page_type in (PageType.LeafTable, PageType.LeafIndex, PageType.InteriorIndex):
             cell.first_overflow_page_page_number = self.read_uint32()
 
         return cell
+
+    def read_column(self, serial_type: int) -> Any:
+        if serial_type == 0:
+            return None
+        elif serial_type == 1:
+            return self.read_uint8()
+        elif serial_type == 2:
+            return self.read_uint16()
+        # elif serial_type == 3:
+        #     return self.read_uint24()
+        elif serial_type == 4:
+            return self.read_uint32()
+        # elif serial_type == 5:
+        #     return self.read_uint48()
+        elif serial_type == 6:
+            return self.read_uint64()
+        elif serial_type == 7:
+            return self.read_float()
+        elif serial_type == 8:
+            return 0
+        elif serial_type == 9:
+            return 1
+        elif serial_type >= 12 and serial_type % 2 == 0:
+            return self.read_bytes(int((serial_type - 12) / 2))
+        elif serial_type >= 13 and serial_type % 2 != 0:
+            return self.read_bytes(int((serial_type - 13) / 2)).decode(
+                self.database_text_encoding.python()
+            )
+        else:
+            raise ValueError(f'Unhandled serial type {serial_type}')
 
     def read_uint8(self) -> int:
         return self.unpack('B')
@@ -196,11 +251,17 @@ class SQLiteFile:
     def read_uint64(self) -> int:
         return self.unpack('Q', 8)
 
+    def read_float(self) -> float:
+        return self.unpack('f', 4)
+
     def read_bytes(self, size: int) -> bytes:
         return self.f.read(size)
 
     def read_byte(self) -> bytes:
         return self.read_bytes(1)
+
+    def tell(self) -> int:
+        return self.f.tell()
 
     def move(self, offset: int) -> None:
         self.f.seek(offset, SEEK_CUR)
