@@ -63,18 +63,20 @@ class SQLiteFile:
         if self.read_bytes(16) != b'SQLite format 3\x00':
             raise ValueError('Not a SQLite file')
 
-        self.read_first_page()
+        self.read_header()
 
-        # while True:
-        #     page = self.read_page()
-        #
-        #     if not page:
-        #         break
-        #
-        #     self.pages.append(page)
+        # TODO Use self.page_size and self.db_size_pages
+
+        self.pages.append(
+            self.read_page(0)
+        )
 
     def read_header(self) -> None:
         self.page_size = self.read_uint16()
+
+        if self.page_size == 1:
+            self.page_size = 65536
+
         self.write_version = WriteVersion(self.read_uint8())
         self.read_version = ReadVersion(self.read_uint8())
         self.reserved_space_size = self.read_uint8()
@@ -87,7 +89,7 @@ class SQLiteFile:
         self.total_freelist_page = self.read_uint32()
         self.schema_cookie = self.read_uint32()
         self.schema_format_number = self.read_uint32()
-        self.default_page_cache_size = self.read_uint32()
+        self.default_page_cache_size = self.read_int32()
         self.largest_root_btree_page_number = self.read_uint32()
         self.database_text_encoding = DatabaseTextEncoding(self.read_uint32())
         self.user_version = self.read_uint32()
@@ -99,15 +101,14 @@ class SQLiteFile:
         self.version_valid_for_number = self.read_uint32()
         self.sqlite_version_number = self.read_uint32()
 
-    def read_first_page(self) -> None:
-        self.read_header()
-
+    def read_page(self, page_number: int) -> SQLitePage:
         page = SQLitePage()
 
-        page.start = 0
+        page.start = 0 if page_number == 0 else self.tell()
+        page.end = page.start + self.page_size
         page.page_type = PageType(self.read_uint8())
         page.start_first_freeblock = self.read_uint16()
-        page.cells_count = self.read_uint16() # FIXME For some reason does not find the correct amount of cells of the first page (3 instead or 5)
+        page.cells_count = self.read_uint16()
         page.start_cell_content_area = self.read_uint16()
 
         if page.start_cell_content_area == 0:
@@ -115,7 +116,7 @@ class SQLiteFile:
 
         page.fragmented_bytes_count = self.read_uint8()
 
-        if page.page_type in (PageType.InteriorTable, PageType.InteriorIndex):
+        if page.page_type == PageType.InteriorTable:
             page.right_most_pointer = self.read_uint32()
 
         page.cell_offsets = [
@@ -130,7 +131,7 @@ class SQLiteFile:
 
         self.move_set(pos)
 
-        self.pages.append(page)
+        return page
 
     @classmethod
     def exec(cls, f: BinaryIO, command: str) -> str:
@@ -155,10 +156,12 @@ class SQLiteFile:
     def exec_tables(self) -> str:
         return ''
 
-    def unpack(self, fmt: str, size: int = 1) -> Any:
+    def unpack(self, fmt: str) -> Any:
         ret = struct.unpack(
             f'>{fmt}',
-            self.read_bytes(size)
+            self.read_bytes(
+                struct.calcsize(fmt)
+            )
         )
 
         return ret[0] if len(ret) == 1 else ret
@@ -167,7 +170,7 @@ class SQLiteFile:
         bits = ''
 
         while True:
-            byte_bits = format(self.read_uint8(), '08b')
+            byte_bits = format(self.read_int8(), '08b')
 
             bits += byte_bits[1:]
 
@@ -198,6 +201,8 @@ class SQLiteFile:
                 self.read_varint() for _ in range(page.cells_count)
             ]
 
+            print(cell.payload.serial_types)
+
             cell.payload.columns = [
                 self.read_column(serial_type) for serial_type in cell.payload.serial_types
             ]
@@ -216,16 +221,16 @@ class SQLiteFile:
             return self.read_uint8()
         elif serial_type == 2:
             return self.read_uint16()
-        # elif serial_type == 3:
-        #     return self.read_uint24()
+        elif serial_type == 3:
+            return self.read_bytes(3) # TODO
         elif serial_type == 4:
             return self.read_uint32()
-        # elif serial_type == 5:
-        #     return self.read_uint48()
+        elif serial_type == 5:
+            return self.read_bytes(6) # TODO
         elif serial_type == 6:
             return self.read_uint64()
         elif serial_type == 7:
-            return self.read_float()
+            return self.read_double()
         elif serial_type == 8:
             return 0
         elif serial_type == 9:
@@ -239,20 +244,35 @@ class SQLiteFile:
         else:
             raise ValueError(f'Unhandled serial type {serial_type}')
 
+    def read_int8(self) -> int:
+        return self.unpack('b')
+
     def read_uint8(self) -> int:
         return self.unpack('B')
 
+    def read_int16(self) -> int:
+        return self.unpack('h')
+
     def read_uint16(self) -> int:
-        return self.unpack('H', 2)
+        return self.unpack('H')
+
+    def read_int32(self) -> int:
+        return self.unpack('i')
 
     def read_uint32(self) -> int:
-        return self.unpack('I', 4)
+        return self.unpack('I')
+
+    def read_int64(self) -> int:
+        return self.unpack('q')
 
     def read_uint64(self) -> int:
-        return self.unpack('Q', 8)
+        return self.unpack('Q')
 
     def read_float(self) -> float:
-        return self.unpack('f', 4)
+        return self.unpack('f')
+
+    def read_double(self) -> float:
+        return self.unpack('d')
 
     def read_bytes(self, size: int) -> bytes:
         return self.f.read(size)
